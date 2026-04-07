@@ -18,7 +18,7 @@
       dependenciesFor = pkgs : with pkgs; []
         ++ (lib.optionals stdenv.isLinux [
           # For Linux clipboard support.
-          xorg.libX11.dev
+          libX11.dev
         ])
         ++ (lib.optionals stdenv.isDarwin [
           # For macOS clipboard support.
