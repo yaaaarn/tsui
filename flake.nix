@@ -4,7 +4,7 @@
 
   outputs = { self, nixpkgs }:
     let
-      version = "0.2.1";
+      version = "0.2.0-yarn";
 
       # System types to support.
       supportedSystems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
@@ -38,7 +38,7 @@
           };
           linuxInterpreter = linuxInterpreters.${pkgs.stdenv.hostPlatform.parsed.cpu.name};
         in
-        {
+        rec {
           tsui = pkgs.buildGoModule {
             inherit pname;
             inherit version;
@@ -65,12 +65,24 @@
             vendorHash = "sha256-FIbkPE5KQ4w7Tc7kISQ7ZYFZAoMNGiVlFWzt8BPCf+A=";
 
             buildInputs = dependenciesFor pkgs;
+          };
 
+          # This is an attempt at building a package independent from nix.
+          # In order to do so, it changes the library loader for the one
+          # usually found in `/lib/ld-linux....so`
+          # Note that this does not change binary rpath, so libraries may still
+          # be searched in `/nix/store`, but depending on the new ld-linux
+          # used, it may also fallsback onto more "traditional" (e.g.
+          # `/usr/lib64`) directories.
+          # Note that this breaks the run on nixos-system, because
+          # `/lib/ld-linux...` is not a real library loader.
+          tsui_no_nix_ld = tsui.overrideAttrs (oldAttrs:
+          {
             # Un-Nix the build so it can dlopen() X11 outside of Nix environments.
             preFixup = if pkgs.stdenv.isLinux then ''
               patchelf --remove-rpath --set-interpreter ${linuxInterpreter} $out/bin/${pname}
             '' else null;
-          };
+          });
         });
 
       # Add dependencies that are only needed for development
@@ -89,5 +101,10 @@
       # flake provides only one package or there is a clear "main"
       # package.
       defaultPackage = forAllSystems (system: self.packages.${system}.tsui);
+
+      # nix bundle .# creates a file `tsui` in current directory which is a
+      # self auto-extractable archive which should be self contained and hence
+      # easy to deploy.
+      bundles = forAllSystems (system: self.packages.${system}.tsui);
     };
 }

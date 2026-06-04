@@ -186,9 +186,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}),
 		)
 	case pingTickMsg:
-		// For now we'll just run this on our exit nodes.
 		return m, tea.Batch(
-			makeDoPings(m.state.ExitNodes),
+			makeDoPings(m.state.AllExitNodes()),
 			tea.Tick(pingTickInterval, func(_ time.Time) tea.Msg {
 				return pingTickMsg{}
 			}),

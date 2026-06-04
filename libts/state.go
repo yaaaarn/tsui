@@ -10,6 +10,7 @@ import (
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
+	"tailscale.com/types/views"
 )
 
 // Opinionated, sanitized subset of Tailscale state.
@@ -36,8 +37,10 @@ type State struct {
 	// True if the node is locked out by tailnet lock.
 	IsLockedOut bool
 
-	// Exit node peers sorted by PeerName.
+	// Exit node peers sorted by PeerName (non-Mullvad).
 	ExitNodes []*ipnstate.PeerStatus
+	// Mullvad exit node peers (with Location data) sorted by PeerName.
+	MullvadExitNodes []*ipnstate.PeerStatus
 	// Peers owned by the user sorted by PeerName.
 	MyNodes []*ipnstate.PeerStatus
 	// Tagged peers sorted by PeerName.
@@ -63,6 +66,19 @@ func sortNodes(nodes []*ipnstate.PeerStatus) {
 	slices.SortFunc(nodes, func(a, b *ipnstate.PeerStatus) int {
 		return strings.Compare(PeerName(a), PeerName(b))
 	})
+}
+
+// isMullvadExitNode checks if a peer has the Mullvad exit node tag.
+func isMullvadExitNode(peer *ipnstate.PeerStatus) bool {
+	return peer.Tags != nil && views.SliceContains(*peer.Tags, "tag:mullvad-exit-node")
+}
+
+// AllExitNodes returns all exit nodes (regular + Mullvad) combined into a new slice.
+func (s *State) AllExitNodes() []*ipnstate.PeerStatus {
+	all := make([]*ipnstate.PeerStatus, 0, len(s.ExitNodes)+len(s.MullvadExitNodes))
+	all = append(all, s.ExitNodes...)
+	all = append(all, s.MullvadExitNodes...)
+	return all
 }
 
 // Create an ipn.State from the string representation.
@@ -126,7 +142,17 @@ func GetState(ctx context.Context) (State, error) {
 		state.RxBytes += peer.RxBytes
 
 		if peer.ExitNodeOption {
-			state.ExitNodes = append(state.ExitNodes, peer)
+			if peer.Location != nil {
+				state.MullvadExitNodes = append(state.MullvadExitNodes, peer)
+			} else {
+				state.ExitNodes = append(state.ExitNodes, peer)
+			}
+		}
+
+		// Skip Mullvad exit nodes from network device lists;
+		// they are already shown in the exit node menu.
+		if isMullvadExitNode(peer) {
+			continue
 		}
 
 		if peer.UserID == status.Self.UserID {
@@ -150,6 +176,7 @@ func GetState(ctx context.Context) (State, error) {
 	}
 
 	sortNodes(state.ExitNodes)
+	sortNodes(state.MullvadExitNodes)
 	sortNodes(state.MyNodes)
 	sortNodes(state.TaggedNodes)
 	for key, value := range state.OwnedNodes {
@@ -183,6 +210,19 @@ func GetState(ctx context.Context) (State, error) {
 			if peer.ID == status.ExitNodeStatus.ID {
 				state.CurrentExitNodeName = PeerName(peer)
 				break
+			}
+		}
+
+		if state.CurrentExitNodeName == "" {
+			for _, peer := range state.MullvadExitNodes {
+				if peer.ID == status.ExitNodeStatus.ID {
+					if peer.Location != nil {
+						state.CurrentExitNodeName = peer.Location.City + ", " + peer.Location.Country
+					} else {
+						state.CurrentExitNodeName = PeerName(peer)
+					}
+					break
+				}
 			}
 		}
 	}

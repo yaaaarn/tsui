@@ -8,5 +8,5 @@ var Logo = strings.Join([]string{
 	` / __/ ___/ / / / / `,
 	`/ /_(__  ) /_/ / /  `,
 	`\__/____/\__,_/_/   `,
-	`    by neuralink    `,
+	`                     `,
 }, "\n")

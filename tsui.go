@@ -11,14 +11,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/neuralinkcorp/tsui/libts"
 	"github.com/neuralinkcorp/tsui/ui"
-	"github.com/neuralinkcorp/tsui/version"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 )
 
 // Injected at build time by the flake.nix.
 // This has to be a var or -X can't override it.
-var Version = "local"
+var Version = "local-yarn"
 
 const (
 	// Rate at which to poll Tailscale for status updates.
@@ -115,7 +114,7 @@ func (m model) Init() tea.Cmd {
 		// Perform our initial state fetch to populate menus
 		updateState,
 		// Run an initial batch of pings.
-		makeDoPings(m.state.ExitNodes),
+		makeDoPings(m.state.AllExitNodes()),
 		// Kick off our ticks.
 		tea.Tick(tickInterval, func(_ time.Time) tea.Msg {
 			return tickMsg{}
@@ -160,17 +159,4 @@ func main() {
 	}
 	m = finalModel.(model)
 
-	if m.latestVersion != "" && Version != "local" && m.latestVersion != Version {
-		text := lipgloss.NewStyle().
-			Foreground(ui.Yellow).
-			Bold(true).
-			Render("Update available!")
-		text += lipgloss.NewStyle().
-			Foreground(ui.Yellow).
-			Render(fmt.Sprintf(" To upgrade tsui from %s to %s, run:", Version, m.latestVersion))
-		text += lipgloss.NewStyle().
-			Foreground(ui.Blue).
-			Render("\n    " + version.UpdateCommand)
-		fmt.Println(text)
-	}
 }

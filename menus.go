@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"slices"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -165,8 +167,10 @@ func (m *model) updateMenus() {
 
 		// Update the exit node submenu.
 		{
-			exitNodeItems := make([]ui.SubmenuItem, 2+len(m.state.ExitNodes))
-			exitNodeItems[0] = &ui.ToggleableSubmenuItem{
+			exitNodeItems := make([]ui.SubmenuItem, 0)
+
+			// "None" option
+			exitNodeItems = append(exitNodeItems, &ui.ToggleableSubmenuItem{
 				LabeledSubmenuItem: ui.LabeledSubmenuItem{
 					Label: "None",
 					OnActivate: func() tea.Msg {
@@ -178,33 +182,128 @@ func (m *model) updateMenus() {
 					},
 				},
 				IsActive: m.state.CurrentExitNode == nil,
-			}
-			exitNodeItems[1] = &ui.DividerSubmenuItem{}
-			for i, exitNode := range m.state.ExitNodes {
-				// Offset for the "None" item and the divider.
-				i += 2
+			})
 
-				pingLabel := "???"
-				if !exitNode.Online {
-					pingLabel = "Offline"
-				} else if m.pings[exitNode.ID] != nil {
-					pingLabel = fmt.Sprintf("%dms", int(math.Round(m.pings[exitNode.ID].LatencySeconds*1000)))
+			exitNodeItems = append(exitNodeItems, &ui.DividerSubmenuItem{})
+
+			// Tailnet exit nodes (non-Mullvad)
+			if len(m.state.ExitNodes) > 0 {
+				exitNodeItems = append(exitNodeItems, &ui.TitleSubmenuItem{Label: "Tailnet Exit Nodes"})
+				for _, exitNode := range m.state.ExitNodes {
+					pingLabel := "???"
+					if !exitNode.Online {
+						pingLabel = "Offline"
+					} else if m.pings[exitNode.ID] != nil {
+						pingLabel = fmt.Sprintf("%dms", int(math.Round(m.pings[exitNode.ID].LatencySeconds*1000)))
+					}
+
+					exitNodeItems = append(exitNodeItems, &ui.ToggleableSubmenuItem{
+						LabeledSubmenuItem: ui.LabeledSubmenuItem{
+							Label:           libts.PeerName(exitNode),
+							AdditionalLabel: pingLabel,
+							OnActivate: func() tea.Msg {
+								err := libts.SetExitNode(ctx, exitNode)
+								if err != nil {
+									return errorMsg(err)
+								}
+								return updateState()
+							},
+							IsDim: !exitNode.Online,
+						},
+						IsActive: m.state.CurrentExitNode != nil && exitNode.ID == *m.state.CurrentExitNode,
+					})
+				}
+			}
+
+			// Mullvad exit nodes grouped by country/city
+			if len(m.state.MullvadExitNodes) > 0 {
+				if len(m.state.ExitNodes) > 0 {
+					exitNodeItems = append(exitNodeItems, &ui.DividerSubmenuItem{})
 				}
 
-				exitNodeItems[i] = &ui.ToggleableSubmenuItem{
-					LabeledSubmenuItem: ui.LabeledSubmenuItem{
-						Label:           libts.PeerName(exitNode),
-						AdditionalLabel: pingLabel,
-						OnActivate: func() tea.Msg {
-							err := libts.SetExitNode(ctx, exitNode)
-							if err != nil {
-								return errorMsg(err)
+				type cityGroup struct {
+					city  string
+					nodes []*ipnstate.PeerStatus
+				}
+				countryGroups := make(map[string][]cityGroup)
+				countryOrder := make([]string, 0)
+
+				for _, node := range m.state.MullvadExitNodes {
+					if node.Location == nil {
+						continue
+					}
+					country := node.Location.Country
+					city := node.Location.City
+
+					if _, ok := countryGroups[country]; !ok {
+						countryGroups[country] = make([]cityGroup, 0)
+						countryOrder = append(countryOrder, country)
+					}
+
+					found := false
+					for i, cg := range countryGroups[country] {
+						if cg.city == city {
+							countryGroups[country][i].nodes = append(countryGroups[country][i].nodes, node)
+							found = true
+							break
+						}
+					}
+					if !found {
+						countryGroups[country] = append(countryGroups[country], cityGroup{
+							city:  city,
+							nodes: []*ipnstate.PeerStatus{node},
+						})
+					}
+				}
+
+				slices.Sort(countryOrder)
+
+				for i, country := range countryOrder {
+					cities := countryGroups[country]
+					if i > 0 {
+						exitNodeItems = append(exitNodeItems, &ui.SpacerSubmenuItem{})
+					}
+					exitNodeItems = append(exitNodeItems, &ui.TitleSubmenuItem{Label: country})
+
+					slices.SortFunc(cities, func(a, b cityGroup) int {
+						return strings.Compare(a.city, b.city)
+					})
+
+					for _, cg := range cities {
+						slices.SortFunc(cg.nodes, func(a, b *ipnstate.PeerStatus) int {
+							return strings.Compare(libts.PeerName(a), libts.PeerName(b))
+						})
+
+						for _, node := range cg.nodes {
+							pingLabel := "???"
+							if !node.Online {
+								pingLabel = "Offline"
+							} else if m.pings[node.ID] != nil {
+								pingLabel = fmt.Sprintf("%dms", int(math.Round(m.pings[node.ID].LatencySeconds*1000)))
 							}
-							return updateState()
-						},
-						IsDim: !exitNode.Online,
-					},
-					IsActive: m.state.CurrentExitNode != nil && exitNode.ID == *m.state.CurrentExitNode,
+
+							label := cg.city
+							if len(cg.nodes) > 1 {
+								label = cg.city + " - " + libts.PeerName(node)
+							}
+
+							exitNodeItems = append(exitNodeItems, &ui.ToggleableSubmenuItem{
+								LabeledSubmenuItem: ui.LabeledSubmenuItem{
+									Label:           label,
+									AdditionalLabel: pingLabel,
+									OnActivate: func() tea.Msg {
+										err := libts.SetExitNode(ctx, node)
+										if err != nil {
+											return errorMsg(err)
+										}
+										return updateState()
+									},
+									IsDim: !node.Online,
+								},
+								IsActive: m.state.CurrentExitNode != nil && node.ID == *m.state.CurrentExitNode,
+							})
+						}
+					}
 				}
 			}
 
