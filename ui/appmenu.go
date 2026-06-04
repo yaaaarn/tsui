@@ -148,5 +148,40 @@ func (appmenu *Appmenu) IsSubmenuOpen() bool {
 // Close the submenu.
 func (appmenu *Appmenu) CloseSubmenu() {
 	appmenu.isOpen = false
-	appmenu.items[appmenu.cursor].Submenu.ResetCursor()
+	appmenu.items[appmenu.cursor].Submenu.StopFiltering()
+}
+
+func (appmenu *Appmenu) IsFiltering() bool {
+	if !appmenu.isOpen || len(appmenu.items) == 0 {
+		return false
+	}
+	return appmenu.items[appmenu.cursor].Submenu.IsFiltering()
+}
+
+func (appmenu *Appmenu) StartFiltering() {
+	if !appmenu.isOpen || len(appmenu.items) == 0 {
+		return
+	}
+	appmenu.items[appmenu.cursor].Submenu.StartFiltering()
+}
+
+func (appmenu *Appmenu) StopFiltering() {
+	if len(appmenu.items) == 0 {
+		return
+	}
+	appmenu.items[appmenu.cursor].Submenu.StopFiltering()
+}
+
+func (appmenu *Appmenu) AddFilterRune(r rune) {
+	if len(appmenu.items) == 0 {
+		return
+	}
+	appmenu.items[appmenu.cursor].Submenu.AddFilterRune(r)
+}
+
+func (appmenu *Appmenu) RemoveFilterRune() {
+	if len(appmenu.items) == 0 {
+		return
+	}
+	appmenu.items[appmenu.cursor].Submenu.RemoveFilterRune()
 }

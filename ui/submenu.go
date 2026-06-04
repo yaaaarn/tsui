@@ -380,7 +380,10 @@ type Submenu struct {
 	//   SubmenuExclusivityNone, SubmenuExclusivityOne
 	Exclusivity SubmenuExclusivity
 	items       []SubmenuItem
+	allItems    []SubmenuItem
 	cursor      int
+	filterQuery string
+	isFiltering bool
 }
 
 // A rendered submenu item and its computed layout info.
@@ -389,8 +392,78 @@ type ComputedSubmenuItem struct {
 	height int
 }
 
+func getItemLabel(item SubmenuItem) string {
+	switch v := item.(type) {
+	case *LabeledSubmenuItem:
+		return v.Label
+	case *ToggleableSubmenuItem:
+		return v.Label
+	case *TitleSubmenuItem:
+		return v.Label
+	}
+	return ""
+}
+
+func (s *Submenu) IsFiltering() bool {
+	return s.isFiltering
+}
+
+func (s *Submenu) StartFiltering() {
+	s.isFiltering = true
+	s.filterQuery = ""
+	s.applyFilter()
+}
+
+func (s *Submenu) StopFiltering() {
+	s.isFiltering = false
+	s.filterQuery = ""
+	s.applyFilter()
+}
+
+func (s *Submenu) AddFilterRune(r rune) {
+	s.filterQuery += string(r)
+	s.applyFilter()
+}
+
+func (s *Submenu) RemoveFilterRune() {
+	if len(s.filterQuery) > 0 {
+		s.filterQuery = s.filterQuery[:len(s.filterQuery)-1]
+	}
+	if s.filterQuery == "" {
+		s.isFiltering = false
+	}
+	s.applyFilter()
+}
+
+func (s *Submenu) applyFilter() {
+	if !s.isFiltering || s.filterQuery == "" {
+		s.items = make([]SubmenuItem, len(s.allItems))
+		copy(s.items, s.allItems)
+		s.fixCursor()
+		return
+	}
+	query := strings.ToLower(s.filterQuery)
+	s.items = make([]SubmenuItem, 0)
+	for _, item := range s.allItems {
+		label := getItemLabel(item)
+		if strings.Contains(strings.ToLower(label), query) {
+			s.items = append(s.items, item)
+		}
+	}
+	s.fixCursor()
+}
+
 // Render the submenu to a fixed-height string with scrolling.
 func (submenu *Submenu) Render(isSubmenuOpen bool, height int) string {
+	var s strings.Builder
+	var searchBarHeight int
+
+	if isSubmenuOpen && submenu.isFiltering {
+		searchBarHeight = 1
+	}
+
+	availHeight := height - searchBarHeight
+
 	// Render all of the computedItems to strings so we can work with their computed heights.
 	computedItems := make([]ComputedSubmenuItem, len(submenu.items))
 	for i, item := range submenu.items {
@@ -405,89 +478,113 @@ func (submenu *Submenu) Render(isSubmenuOpen bool, height int) string {
 	// Submenus can scroll, and each item can be any number of lines, so our layout engine
 	// needs to be a little bit smart.
 
-	// 1. Start with the selected item. We will always display this.
-	topOverflow := false
-	bottomOverflow := false
-	rangeStart := submenu.cursor
-	rangeEnd := submenu.cursor + 1
-	totalHeight := computedItems[submenu.cursor].height
+	if len(computedItems) == 0 {
+		empty := lipgloss.NewStyle().Width(submenuItemWidth).Render("")
+		for i := 0; i < availHeight; i++ {
+			if i != 0 {
+				s.WriteByte('\n')
+			}
+			s.WriteString(empty)
+		}
+	} else {
+		// 1. Start with the selected item. We will always display this.
+		topOverflow := false
+		bottomOverflow := false
+		rangeStart := submenu.cursor
+		rangeEnd := submenu.cursor + 1
+		totalHeight := computedItems[submenu.cursor].height
 
-	// 2. Add items backward from the selected item...
-	for i := rangeStart - 1; i >= 0; i-- {
-		// ... until an item doesn't fit. In this case, show a "..." indicator at the top instead
-		// of adding that item.
-		if totalHeight+computedItems[i].height >= height && i != 0 {
-			topOverflow = true
-			totalHeight++
-			break
+		// 2. Add items backward from the selected item...
+		for i := rangeStart - 1; i >= 0; i-- {
+			// ... until an item doesn't fit. In this case, show a "..." indicator at the top instead
+			// of adding that item.
+			if totalHeight+computedItems[i].height >= availHeight && i != 0 {
+				topOverflow = true
+				totalHeight++
+				break
+			}
+
+			rangeStart = i
+			totalHeight += computedItems[i].height
 		}
 
-		rangeStart = i
-		totalHeight += computedItems[i].height
-	}
+		// 3. Add items forward from the selected item...
+		for i := rangeEnd; i < len(computedItems); i++ {
+			// ... until an item doesn't fit. In this case, show a "..." indicator at the bottom
+			// instead of adding that item.
+			if totalHeight+computedItems[i].height >= availHeight && i != len(computedItems)-1 {
+				bottomOverflow = true
+				totalHeight++
+				break
+			}
 
-	// 3. Add items forward from the selected item...
-	for i := rangeEnd; i < len(computedItems); i++ {
-		// ... until an item doesn't fit. In this case, show a "..." indicator at the bottom
-		// instead of adding that item.
-		if totalHeight+computedItems[i].height >= height && i != len(computedItems)-1 {
-			bottomOverflow = true
-			totalHeight++
-			break
+			rangeEnd = i + 1
+			totalHeight += computedItems[i].height
 		}
 
-		rangeEnd = i + 1
-		totalHeight += computedItems[i].height
-	}
+		// 4. Make sure everything fits after adding the overflow indicators by popping
+		//    items from the start until we no longer exceed the height.
+		for totalHeight > availHeight {
+			if !topOverflow {
+				topOverflow = true
+				totalHeight++
+			}
 
-	// 4. Make sure everything fits after adding the overflow indicators by popping
-	//    items from the start until we no longer exceed the height.
-	for totalHeight > height {
-		if !topOverflow {
-			topOverflow = true
-			totalHeight++
+			totalHeight -= computedItems[rangeStart].height
+			rangeStart++
 		}
 
-		totalHeight -= computedItems[rangeStart].height
-		rangeStart++
+		// 5. Clamp the range so we can NEVER crash.
+		rangeStart = max(0, rangeStart)
+		rangeEnd = max(rangeStart, min(rangeEnd, len(computedItems)))
+
+		// Now we have a range of all menu items that can fit on screen, and we can create the
+		// final string.
+		overflow := lipgloss.NewStyle().
+			Background(DarkGray).
+			MarginLeft(2).
+			Render("...")
+
+		// Add the top overflow indicator.
+		if topOverflow {
+			s.WriteString(overflow + "\n")
+
+			// If we have a top overflow indicator but aren't using the whole height of the screen,
+			// one of the items was oddly sized. Add some padding underneath the overflow indicator
+			// to keep all of the other items aligned to the bottom.
+			for i := 0; i < availHeight-totalHeight; i++ {
+				s.WriteByte('\n')
+			}
+		}
+
+		// Add the rendered items.
+		for i, item := range computedItems[rangeStart:rangeEnd] {
+			if i != 0 {
+				s.WriteByte('\n')
+			}
+			s.WriteString(item.text)
+		}
+
+		// Add the bottom overflow indicator.
+		if bottomOverflow {
+			s.WriteString("\n" + overflow)
+		}
 	}
 
-	// 5. Clamp the range so we can NEVER crash.
-	rangeStart = max(0, rangeStart)
-	rangeEnd = max(rangeStart, min(rangeEnd, len(computedItems)))
-
-	// Now we have a range of all menu items that can fit on screen, and we can create the
-	// final string.
-	overflow := lipgloss.NewStyle().
-		Background(DarkGray).
-		MarginLeft(2).
-		Render("...")
-
-	var s strings.Builder
-
-	// Add the top overflow indicator.
-	if topOverflow {
-		s.WriteString(overflow + "\n")
-
-		// If we have a top overflow indicator but aren't using the whole height of the screen,
-		// one of the items was oddly sized. Add some padding underneath the overflow indicator
-		// to keep all of the other items aligned to the bottom.
-		for i := 0; i < height-totalHeight; i++ {
+	// Add search bar at the bottom.
+	if isSubmenuOpen && submenu.isFiltering {
+		if s.Len() > 0 {
 			s.WriteByte('\n')
 		}
-	}
-
-	// Add the rendered items.
-	for i, item := range computedItems[rangeStart:rangeEnd] {
-		if i != 0 {
-			s.WriteByte('\n')
+		searchText := "/" + submenu.filterQuery
+		if len(submenu.filterQuery) == 0 {
+			searchText = "/"
 		}
-		s.WriteString(item.text)
-	}
-
-	// Add the bottom overflow indicator.
-	if bottomOverflow {
-		s.WriteString("\n" + overflow)
+		searchStyle := lipgloss.NewStyle().
+			Background(DarkGray).
+			PaddingLeft(1).
+			Width(submenuItemWidth)
+		s.WriteString(searchStyle.Render(searchText))
 	}
 
 	return s.String()
@@ -525,8 +622,8 @@ func (submenu *Submenu) ResetCursor() {
 
 // Set the items list and ensure the cursor is within bounds and on a selectable item.
 func (submenu *Submenu) SetItems(items []SubmenuItem) {
-	submenu.items = items
-	submenu.fixCursor()
+	submenu.allItems = items
+	submenu.applyFilter()
 }
 
 // Ensure the cursor is within bounds and on a selectable item. Call after major updates to the items.

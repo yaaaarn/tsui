@@ -117,9 +117,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// If searching, route key events to the filter.
+		if m.menu.IsFiltering() {
+			switch msg.String() {
+			case "enter":
+				cmd := m.menu.Activate()
+				m.menu.StopFiltering()
+				return m, cmd
+			case "esc":
+				m.menu.StopFiltering()
+			case "backspace", "ctrl+h":
+				m.menu.RemoveFilterRune()
+			case "up":
+				m.menu.CursorUp()
+			case "down":
+				m.menu.CursorDown()
+			default:
+				if len(msg.String()) == 1 && msg.String()[0] >= 32 {
+					m.menu.AddFilterRune(rune(msg.String()[0]))
+				}
+			}
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "/":
+			if m.menu.IsSubmenuOpen() {
+				m.menu.StartFiltering()
+			}
 		case "esc":
 			if m.menu.IsSubmenuOpen() {
 				m.menu.CloseSubmenu()
