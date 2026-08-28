@@ -33,7 +33,7 @@
             inherit pname version;
             src = ./.;
 
-            preBuild = if pkgs.stdenv.isLinux && pkgs.stdenv.isx86_64 then ''
+            preBuild = if pkgs.stdenv.hostPlatform.isLinux && pkgs.stdenv.hostPlatform.isx86_64 then ''
               export GODEBUG=asyncpreemptoff=1
             '' else null;
 
@@ -41,11 +41,11 @@
 
             vendorHash = "sha256-FIbkPE5KQ4w7Tc7kISQ7ZYFZAoMNGiVlFWzt8BPCf+A=";
 
-            nativeBuildInputs = if pkgs.stdenv.isLinux then [ pkgs.pkg-config ] else [ ];
+            nativeBuildInputs = if pkgs.stdenv.hostPlatform.isLinux then [ pkgs.pkg-config ] else [ ];
 
             buildInputs = 
-              if pkgs.stdenv.isLinux then [ pkgs.libx11 ]
-              else if pkgs.stdenv.isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Cocoa ]
+              if pkgs.stdenv.hostPlatform.isLinux then [ pkgs.libx11 ]
+              else if pkgs.stdenv.hostPlatform.isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Cocoa ]
               else [ ];
           };
 
@@ -53,7 +53,7 @@
           default = self.packages.${system}.tsui;
 
           tsui_no_nix_ld = self.packages.${system}.tsui.overrideAttrs (oldAttrs: {
-            preFixup = if pkgs.stdenv.isLinux then ''
+            preFixup = if pkgs.stdenv.hostPlatform.isLinux then ''
               patchelf --remove-rpath --set-interpreter ${linuxInterpreter} $out/bin/${pname}
             '' else null;
           });
@@ -67,10 +67,10 @@
           default = pkgs.mkShell {
             packages = with pkgs; [ go gopls gotools go-tools ];
 
-            nativeBuildInputs = if pkgs.stdenv.isLinux then [ pkgs.pkg-config ] else [ ];
+            nativeBuildInputs = if pkgs.stdenv.hostPlatform.isLinux then [ pkgs.pkg-config ] else [ ];
             buildInputs = 
-              if pkgs.stdenv.isLinux then [ pkgs.libx11 ]
-              else if pkgs.stdenv.isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Cocoa ]
+              if pkgs.stdenv.hostPlatform.isLinux then [ pkgs.libx11 ]
+              else if pkgs.stdenv.hostPlatform.isDarwin then [ pkgs.darwin.apple_sdk.frameworks.Cocoa ]
               else [ ];
           };
         });
